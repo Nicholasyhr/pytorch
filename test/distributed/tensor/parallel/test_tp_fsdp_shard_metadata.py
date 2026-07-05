@@ -138,7 +138,9 @@ class TestGetBoxForUnevenShards(DTensorTestBase):
         _get_box_for, _ = self._get_fsdp_helpers()
         mesh = init_device_mesh("cpu", (self.world_size,))
 
-        dt = distribute_tensor(torch.arange(5, dtype=torch.float32), mesh, [Replicate()])
+        dt = distribute_tensor(
+            torch.arange(5, dtype=torch.float32), mesh, [Replicate()]
+        )
 
         for idx in range(self.world_size):
             offsets, sizes = _get_box_for(dt, idx)
