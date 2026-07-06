@@ -2499,6 +2499,93 @@ class SwitchModels:
         def forward(self, idx, x):
             return switch(idx, [self.b0, self.b1, self.b2], (x,))
 
+    class Nested(torch.nn.Module):
+        # Outer switch selects one of 3 branches; each outer branch runs an
+        # inner switch with 3 branches of its own -> 9 reachable leaves.
+        def forward(self, idx0, idx1, a, b, c):
+            def branch_00(x0, y0, z0):
+                return (x0 - y0 * z0) * 3.14
+
+            def branch_01(x0, y0, z0):
+                return (x0 + y0 + z0) * 1.23
+
+            def branch_02(x0, y0, z0):
+                return (x0 * y0 * z0) / 2.71
+
+            def branch_10(x0, y0, z0):
+                return (x0 - y0 - z0) + 1.23
+
+            def branch_11(x0, y0, z0):
+                return (x0 * y0 - z0) - 3.14
+
+            def branch_12(x0, y0, z0):
+                return (x0 / (y0 + 1e-6)) + z0
+
+            def branch_20(x0, y0, z0):
+                return (x0 + y0) * z0
+
+            def branch_21(x0, y0, z0):
+                return (x0 - y0) / (z0 + 1e-6)
+
+            def branch_22(x0, y0, z0):
+                return x0.sin() + y0.cos() + z0
+
+            def outer_0(x, y, z):
+                return switch(idx1, [branch_00, branch_01, branch_02], (x, y, z))
+
+            def outer_1(x, y, z):
+                return switch(idx1, [branch_10, branch_11, branch_12], (x, y, z))
+
+            def outer_2(x, y, z):
+                return switch(idx1, [branch_20, branch_21, branch_22], (x, y, z))
+
+            return switch(idx0, [outer_0, outer_1, outer_2], (a, b, c))
+
+    class SingleBranch(torch.nn.Module):
+        def forward(self, idx, x):
+            return switch(idx, [lambda a: a.sin() + 1.0], (x,))
+
+    class TwoBranches(torch.nn.Module):
+        def forward(self, idx, x):
+            return switch(
+                idx,
+                [lambda a: a.sin(), lambda a: a.cos()],
+                (x,),
+            )
+
+    class WithSymIntIndex(torch.nn.Module):
+        # Index is a SymInt derived from a tensor shape, not a Tensor. Exercises the
+        # ShapeAsConstantBuffer path in Switch.create / codegen_switch.
+        def forward(self, x):
+            idx = x.size(0) % 3
+            return switch(
+                idx,
+                [
+                    lambda a: a + 1.0,
+                    lambda a: a * 2.0,
+                    lambda a: -a,
+                ],
+                (x,),
+            )
+
+    class UnbackedSymIntClosure(torch.nn.Module):
+        # Branches close over an unbacked SymInt derived from .item(). Exercises the
+        # unbacked_bindings plumbing on the Switch IR node.
+        def forward(self, idx, x, y, z):
+            a = y.shape[0]
+            b = z.sum().to(torch.int64).item()
+
+            def branch_0(t):
+                return t + a
+
+            def branch_1(t):
+                return t + b * z
+
+            def branch_2(t):
+                return t - a - b
+
+            return switch(idx, [branch_0, branch_1, branch_2], (x,))
+
 
 class SwitchTests(TestCase):
     def _run_test(
@@ -2508,6 +2595,8 @@ class SwitchTests(TestCase):
         device,
         dynamic=False,
         num_branches=3,
+        num_indices=1,
+        index_values=None,
     ):
         cnt = torch._dynamo.testing.CompileCounterWithBackend("inductor")
         compiled_model = torch.compile(backend=cnt, fullgraph=True)(model)
@@ -2527,10 +2616,14 @@ class SwitchTests(TestCase):
                 for inp in inputs:
                     torch._dynamo.mark_dynamic(inp, 0)
 
+        # Values to prepend as branch indices. Default: [0..num_branches-1] per index slot.
+        if index_values is None:
+            index_values = tuple(range(num_branches))
+
         for inputs in input_sets:
-            for branch_idx in range(num_branches):
-                idx_tensor = torch.tensor(branch_idx, device=device)
-                inputs_with_idx = [idx_tensor, *inputs]
+            for idx_combo in itertools.product(*([index_values] * num_indices)):
+                prepended = [torch.tensor(v, device=device) for v in idx_combo]
+                inputs_with_idx = [*prepended, *inputs]
                 cloned = [inp.clone() for inp in inputs_with_idx]
                 result = model(*inputs_with_idx)
                 result_compiled = compiled_model(*inputs_with_idx)
@@ -2598,6 +2691,98 @@ class SwitchTests(TestCase):
             model=SwitchModels.WithNNModuleParams(device),
             inputs=(torch.randn(4, 4),),
             device=device,
+        )
+
+    @requires_gpu
+    @parametrize("device", ["cpu", GPU_TYPE])
+    @parametrize("dynamic", [False, True])
+    def test_switch_nested_control_flow(self, device, dynamic):
+        # nested switch: outer 3-way switch selects an inner 3-way switch
+        self._run_test(
+            model=SwitchModels.Nested(),
+            inputs=(
+                torch.randn(10, 20),
+                torch.randn(10, 20),
+                torch.randn(10, 20),
+            ),
+            device=device,
+            dynamic=dynamic,
+            num_indices=2,
+        )
+
+    @requires_gpu
+    @parametrize("device", ["cpu", GPU_TYPE])
+    @parametrize("dynamic", [False, True])
+    def test_switch_two_branches(self, device, dynamic):
+        # two-branch switch: closest analogue to torch.cond
+        self._run_test(
+            model=SwitchModels.TwoBranches(),
+            inputs=(torch.randn(10, 20),),
+            device=device,
+            dynamic=dynamic,
+            num_branches=2,
+        )
+
+    @requires_gpu
+    @parametrize("device", ["cpu", GPU_TYPE])
+    def test_switch_single_branch(self, device):
+        # single-branch switch: short-circuits in the switch() frontend and
+        # should degenerate to a plain call before reaching the Inductor IR path.
+        self._run_test(
+            model=SwitchModels.SingleBranch(),
+            inputs=(torch.randn(10, 20),),
+            device=device,
+            num_branches=1,
+        )
+
+    @requires_gpu
+    @parametrize("device", ["cpu", GPU_TYPE])
+    def test_switch_out_of_range_index_clamps(self, device):
+        # torch.switch clamps out-of-range indices to [0, len(branches)-1].
+        # Exercises the "bare else" branch in the generated if/elif/else chain.
+        self._run_test(
+            model=SwitchModels.Simple(),
+            inputs=(torch.randn(10, 20),),
+            device=device,
+            index_values=(-5, -1, 0, 1, 2, 3, 42),
+        )
+
+    @requires_gpu
+    @parametrize("device", ["cpu", GPU_TYPE])
+    @parametrize("dynamic", [False, True])
+    def test_switch_non_tensor_index(self, device, dynamic):
+        # Index is a SymInt derived from a tensor shape (not a Tensor). Exercises
+        # the ShapeAsConstantBuffer branch in Switch.create / codegen_switch.
+        cnt = torch._dynamo.testing.CompileCounterWithBackend("inductor")
+        model = SwitchModels.WithSymIntIndex()
+        compiled = torch.compile(backend=cnt, fullgraph=True)(model)
+
+        for size_0 in (3, 4, 5):
+            x = torch.randn(size_0, 20, device=device)
+            if dynamic:
+                torch._dynamo.mark_dynamic(x, 0)
+            result = model(x)
+            result_compiled = compiled(x)
+            torch.testing.assert_close(result, result_compiled)
+
+        self.assertEqual(cnt.frame_count, 1, "only one compilation expected")
+
+    @requires_gpu
+    @parametrize("device", ["cpu", GPU_TYPE])
+    @parametrize("dynamic", [False, True])
+    @torch._dynamo.config.patch("capture_scalar_outputs", True)
+    def test_switch_unbacked_symint_closure(self, device, dynamic):
+        # Branches close over an unbacked SymInt (from .item()); exercises the
+        # unbacked_bindings plumbing on the Switch IR node.
+        self._run_test(
+            model=SwitchModels.UnbackedSymIntClosure(),
+            inputs=(
+                torch.randn(10, 20),
+                torch.randn(10, 20),
+                torch.randn(10, 20),
+            ),
+            device=device,
+            dynamic=dynamic,
         )
 
 

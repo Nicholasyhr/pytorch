@@ -173,6 +173,8 @@ class WrapperFxCodegen(PythonWrapperCodegen):
         Instead, FX conversion uses a dedicated line for the whole switch node.
         """
         self.writeline(SwitchLine(self, switch))
+        if switch.branches is None:
+            raise AssertionError("switch.branches must not be None")
         for subgraph in switch.branches:
             self.codegen_subgraph_common(subgraph)
 
