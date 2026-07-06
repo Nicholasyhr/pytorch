@@ -4513,19 +4513,12 @@ class PythonWrapperCodegen(CodeGen):
             # move the Tensor index to host
             index = f"int({index}.item())"
 
+        # The index is clamped to [0, len(branches) - 1] by torch.switch before
+        # reaching this point, so each branch gets its own equality check.
         self.writeline(f"{name} = [None] * {len(switch.outputs)}")
-        num_branches = len(switch.branches)
         for b_idx, branch in enumerate(switch.branches):
-            if b_idx == 0:
-                keyword = "if"
-                condition = f" {index} == 0"
-            elif b_idx < num_branches - 1:
-                keyword = "elif"
-                condition = f" {index} == {b_idx}"
-            else:
-                keyword = "else"
-                condition = ""
-            self.writeline(f"{keyword}{condition}:")
+            keyword = "if" if b_idx == 0 else "elif"
+            self.writeline(f"{keyword} {index} == {b_idx}:")
             self.writeline(EnterSubgraphLine(self, branch.graph))
             if V.graph.aot_mode:
                 outer_outputs = [f"{name}[{i}]" for i in range(len(switch.outputs))]

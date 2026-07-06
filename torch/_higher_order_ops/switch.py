@@ -113,6 +113,10 @@ def switch(
 
     Equivalent to: ``branches[index](*operands)`` with index in ``[0, len(branches))``.
 
+    .. note::
+
+        Out-of-range indices are clamped between ``[0, len(branches) - 1]``.
+
     Args:
         index (Union[int, torch.Tensor]): An int or single-element integer tensor
           indicating which branch to run. Out-of-range values are clamped into

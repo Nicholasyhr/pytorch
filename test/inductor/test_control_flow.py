@@ -2757,7 +2757,10 @@ class SwitchTests(TestCase):
         model = SwitchModels.WithSymIntIndex()
         compiled = torch.compile(backend=cnt, fullgraph=True)(model)
 
-        for size_0 in (3, 4, 5):
+        # With dynamic=False, dynamo specializes per shape, so we sweep sizes only
+        # in the dynamic path where a single compilation is expected to cover them.
+        sizes = (3, 4, 5) if dynamic else (4,)
+        for size_0 in sizes:
             x = torch.randn(size_0, 20, device=device)
             if dynamic:
                 torch._dynamo.mark_dynamic(x, 0)

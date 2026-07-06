@@ -2869,13 +2869,13 @@ class CppWrapperCpu(PythonWrapperCodegen):
             index_var = switch.index.codegen_reference()
 
         def codegen_original_switch() -> None:
+            # The index is clamped to [0, len(branches) - 1] by torch.switch before
+            # reaching this point, so each branch gets its own equality check.
             for b_idx, branch in enumerate(switch.branches):
                 if b_idx == 0:
-                    self.writeline(f"if ({index_var} == 0) {{")
-                elif b_idx < len(switch.branches) - 1:
-                    self.writeline(f"}} else if ({index_var} == {b_idx}) {{")
+                    self.writeline(f"if ({index_var} == {b_idx}) {{")
                 else:
-                    self.writeline("} else {")
+                    self.writeline(f"}} else if ({index_var} == {b_idx}) {{")
                 with self._preserve_device_guard_state():
                     self.writeline(EnterSubgraphLine(self, branch.graph))
                     self.codegen_subgraph(branch, outer_inputs, outer_outputs)
