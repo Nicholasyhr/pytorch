@@ -240,6 +240,42 @@ class <lambda>(torch.nn.Module):
         # Stream should be newly allocated on each call
         self.assertNotEqual(s0, s1)
 
+    def test_event_subclass_python_type(self):
+        class MyEvent(torch.Event):
+            pass
+
+        def fn(e):
+            return torch.ones(2) if type(e) is MyEvent else torch.zeros(2)
+
+        res = torch.compile(fn, backend="eager", fullgraph=True)(MyEvent())
+        self.assertEqual(res, torch.ones(2))
+
+    def test_graph_created_stream_event_subclass_preserved(self):
+        class MyStream(torch.Stream):
+            pass
+
+        class MyEvent(torch.Event):
+            pass
+
+        from torch._dynamo.variables.user_defined import UserDefinedClassVariable
+
+        orig = UserDefinedClassVariable._in_graph_classes
+        with patch.object(
+            UserDefinedClassVariable,
+            "_in_graph_classes",
+            staticmethod(lambda: orig() | {MyStream, MyEvent}),
+        ):
+
+            def fn(x):
+                s = MyStream()
+                e = MyEvent()
+                torch._dynamo.graph_break()
+                return x + 1, s, e
+
+            _, s, e = torch.compile(fn, backend="eager")(torch.ones(2))
+        self.assertIs(type(s), MyStream)
+        self.assertIs(type(e), MyEvent)
+
     @requires_cuda
     def test_get_current_stream_return(self):
         def fn(x, s):

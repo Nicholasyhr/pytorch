@@ -5609,12 +5609,16 @@ def _extract_tensor_dict(t: torch.Tensor) -> dict[str, Any]:
     return tensor_dict
 
 
-def build_stream(args: tuple[Any], kwargs: dict[Any, Any]) -> torch.Stream:
-    return torch._C.Stream(*args, **kwargs)
+def build_stream(
+    cls: type[torch.Stream], args: tuple[Any], kwargs: dict[Any, Any]
+) -> torch.Stream:
+    return cls(*args, **kwargs)
 
 
-def build_event(args: tuple[Any], kwargs: dict[Any, Any]) -> torch.Event:
-    return torch._C.Event(*args, **kwargs)
+def build_event(
+    cls: type[torch.Event], args: tuple[Any], kwargs: dict[Any, Any]
+) -> torch.Event:
+    return cls(*args, **kwargs)
 
 
 class FrameState(enum.Enum):

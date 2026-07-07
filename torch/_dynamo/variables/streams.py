@@ -488,7 +488,7 @@ class StreamVariable(StreamContextVariable):
                 event_index = register_graph_created_object(
                     event,
                     EventVariable.make_construct_in_graph_event_fn(
-                        TupleVariable([]), ConstDictVariable({})
+                        TupleVariable([]), ConstDictVariable({}), type(event)
                     ),
                 )
             tx.output.create_proxy(
@@ -561,7 +561,7 @@ class StreamVariable(StreamContextVariable):
 
     @staticmethod
     def make_construct_in_graph_stream_fn(
-        args: TupleVariable, kwargs: ConstDictVariable
+        args: TupleVariable, kwargs: ConstDictVariable, cls: type = torch.Stream
     ) -> Callable[[int, "PyCodegen"], None]:
         def fn(index: int, codegen: "PyCodegen") -> None:
             codegen.add_push_null(
@@ -575,9 +575,12 @@ class StreamVariable(StreamContextVariable):
                     torch._dynamo.utils.__name__, "build_stream"
                 )
             )
+            # load the original class so user subclasses survive reconstruction
+            cls_name = codegen.tx.output.install_global_by_id("_stream_cls", cls)
+            codegen.append_output(codegen.create_load_global(cls_name, add=True))
             codegen(args)
             codegen(kwargs)
-            codegen.extend_output(create_call_function(2, False))
+            codegen.extend_output(create_call_function(3, False))
             codegen.extend_output(create_call_function(1, False))
 
         return fn
@@ -633,7 +636,7 @@ class EventVariable(VariableTracker):
         return object_richcompare(self, tx, other, op)
 
     def python_type(self) -> type:
-        return torch.Event
+        return type(self.value)
 
     def get_real_python_backed_value(self) -> object:
         return self.value
@@ -733,7 +736,7 @@ class EventVariable(VariableTracker):
 
     @staticmethod
     def make_construct_in_graph_event_fn(
-        args: TupleVariable, kwargs: ConstDictVariable
+        args: TupleVariable, kwargs: ConstDictVariable, cls: type = torch.Event
     ) -> Callable[[int, "PyCodegen"], None]:
         def fn(index: int, codegen: "PyCodegen") -> None:
             codegen.add_push_null(
@@ -747,9 +750,12 @@ class EventVariable(VariableTracker):
                     torch._dynamo.utils.__name__, "build_event"
                 )
             )
+            # load the original class so user subclasses survive reconstruction
+            cls_name = codegen.tx.output.install_global_by_id("_event_cls", cls)
+            codegen.append_output(codegen.create_load_global(cls_name, add=True))
             codegen(args)
             codegen(kwargs)
-            codegen.extend_output(create_call_function(2, False))
+            codegen.extend_output(create_call_function(3, False))
             codegen.extend_output(create_call_function(1, False))
 
         return fn
