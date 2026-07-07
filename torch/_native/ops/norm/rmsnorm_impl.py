@@ -92,7 +92,7 @@ def _misaligned_clone_unprofitable(t: torch.Tensor, n: int) -> bool:
     # way, which always lands on an aligned fresh buffer.
     if not t.is_contiguous():
         return False
-    if t.data_ptr() % _required_align_bytes(t, n) == 0:
+    if t.const_data_ptr() % _required_align_bytes(t, n) == 0:
         return False
     return t.numel() < _MISALIGNED_MIN_NUMEL
 
