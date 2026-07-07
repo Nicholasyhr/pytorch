@@ -63,6 +63,16 @@ def tvm(
             "See https://tvm.apache.org/docs/install/index.html for instructions."
         ) from e
 
+    if any(
+        isinstance(x, (torch.SymInt, torch.SymFloat, torch.SymBool))
+        for x in example_inputs
+    ):
+        raise RuntimeError(
+            "The TVM (relay) backend does not support dynamic shapes: got symbolic "
+            "scalar graph inputs. Either compile with dynamic=False or use TVM's "
+            "relax frontend instead: from tvm.relax.frontend.torch import relax_dynamo; "
+            "torch.compile(model, backend=relax_dynamo())."
+        )
     jit_mod = torch.jit.trace(gm, example_inputs)
     device = device_from_inputs(example_inputs)
     shape_list = [(f"inp_{idx}", i.shape) for idx, i in enumerate(example_inputs)]

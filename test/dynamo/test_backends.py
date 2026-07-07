@@ -174,6 +174,22 @@ class TestOptimizations(torch._dynamo.test_case.TestCase):
             with patch.dict(sys.modules, {"tvm": None}):
                 self.assertRaises(ImportError, backend, gm, [torch.randn(2)])
 
+    def test_tvm_dynamic_shapes_error(self, device):
+        def fn(x):
+            return x.view(x.size(0), -1) + 1
+
+        x = torch.randn(2, 3, device=device)
+        compiled = torch.compile(fn, backend="tvm", dynamic=True)
+        # stub tvm imports; the error fires before any tvm API is used
+        stubs = {"tvm": MagicMock(), "tvm.contrib": MagicMock()}
+        with patch.dict(sys.modules, stubs):
+            with self.assertRaisesRegex(
+                torch._dynamo.exc.BackendCompilerFailed,
+                "does not support dynamic shapes",
+            ):
+                compiled(x)
+        torch._dynamo.reset()
+
     @onlyHPU
     def test_intel_gaudi_backend(self, device):
         self._check_backend_works("hpu_backend", device)
