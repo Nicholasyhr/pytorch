@@ -97,48 +97,28 @@ class TestModifiedBesselFunctions(TestCase):
 
     @dtypes(torch.float32, torch.float64)
     def test_modified_bessel_i_nan_inf(self, device, dtype):
+        bessel_i = torch.special.modified_bessel_i
         nu = torch.tensor([2.5], device=device, dtype=dtype)
         x_ok = torch.tensor([1.0], device=device, dtype=dtype)
         x_neg = torch.tensor([-1.0], device=device, dtype=dtype)
         x_zero = torch.tensor([0.0], device=device, dtype=dtype)
-        self.assertTrue(
-            torch.isnan(
-                torch.special.modified_bessel_i(
-                    torch.tensor([float("nan")], device=device, dtype=dtype), nu
-                )
-            ).all()
-        )
-        self.assertTrue(
-            torch.isnan(
-                torch.special.modified_bessel_i(
-                    x_ok, torch.tensor([float("nan")], device=device, dtype=dtype)
-                )
-            ).all()
-        )
-        self.assertTrue(torch.isnan(torch.special.modified_bessel_i(x_neg, nu)).all())
-        self.assertEqual(
-            torch.special.modified_bessel_i(
-                x_ok, torch.tensor([float("inf")], device=device, dtype=dtype)
-            ),
-            torch.zeros_like(x_ok),
-        )
+        nan = torch.tensor([float("nan")], device=device, dtype=dtype)
+        inf = torch.tensor([float("inf")], device=device, dtype=dtype)
+        self.assertTrue(torch.isnan(bessel_i(nan, nu)).all())
+        self.assertTrue(torch.isnan(bessel_i(x_ok, nan)).all())
+        self.assertTrue(torch.isnan(bessel_i(x_neg, nu)).all())
+        self.assertEqual(bessel_i(x_ok, inf), torch.zeros_like(x_ok))
         eps = 1e-4 if dtype == torch.float32 else 1e-12
         for nu_val in [1.0 + eps, 2.0 - eps, -1.0 - eps]:
             nu_near_int = torch.tensor([nu_val], device=device, dtype=dtype)
-            self.assertTrue(
-                torch.isnan(torch.special.modified_bessel_i(x_neg, nu_near_int)).all()
-            )
+            self.assertTrue(torch.isnan(bessel_i(x_neg, nu_near_int)).all())
         self.assertEqual(
-            torch.special.modified_bessel_i(
-                x_zero, torch.tensor([1e-12], device=device, dtype=dtype)
-            ),
+            bessel_i(x_zero, torch.tensor([1e-12], device=device, dtype=dtype)),
             torch.zeros_like(x_zero),
         )
         for nu_val in [-1e-12, -1.0 - eps]:
             nu = torch.tensor([nu_val], device=device, dtype=dtype)
-            self.assertTrue(
-                torch.isinf(torch.special.modified_bessel_i(x_zero, nu)).all()
-            )
+            self.assertTrue(torch.isinf(bessel_i(x_zero, nu)).all())
 
     @dtypes(torch.float32, torch.float64)
     def test_modified_bessel_i_negative_x_integer_order(self, device, dtype):
@@ -179,19 +159,12 @@ class TestModifiedBesselFunctions(TestCase):
 
     @dtypes(torch.float32, torch.float64)
     def test_modified_bessel_k_huge_nu_limits(self, device, dtype):
-        # At this order scale scipy's AMOS backend gives up and returns NaN,
-        # so the OpInfo large-values reference test is skipped; assert the
-        # limiting values directly instead: K_nu(x) overflows for nu >> x
-        # and underflows along nu == x as nu -> inf.
-        x = torch.tensor(
-            [501.0, 1001.2, 4988429.2, 1e20], device=device, dtype=dtype
-        )
+        # scipy's AMOS kv gives up (NaN) at 1e20-scale orders, so the OpInfo
+        # large-values reference test is skipped; pin the IEEE limits instead.
+        inf = float("inf")
+        x = torch.tensor([501.0, 1001.2, 4988429.2, 1e20], device=device, dtype=dtype)
+        expected = torch.tensor([inf, inf, inf, 0.0], device=device, dtype=dtype)
         nu = torch.full_like(x, 1e20)
-        expected = torch.tensor(
-            [float("inf"), float("inf"), float("inf"), 0.0],
-            device=device,
-            dtype=dtype,
-        )
         self.assertEqual(torch.special.modified_bessel_k(x, nu), expected)
         self.assertEqual(torch.special.modified_bessel_k(x, -nu), expected)
 
@@ -204,24 +177,14 @@ class TestModifiedBesselFunctions(TestCase):
 
     @dtypes(torch.float32, torch.float64)
     def test_modified_bessel_k_nan_inf(self, device, dtype):
+        bessel_k = torch.special.modified_bessel_k
         nu = torch.tensor([2.5], device=device, dtype=dtype)
         x_ok = torch.tensor([1.0], device=device, dtype=dtype)
-        self.assertTrue(
-            torch.isnan(
-                torch.special.modified_bessel_k(
-                    torch.tensor([float("nan")], device=device, dtype=dtype), nu
-                )
-            ).all()
-        )
-        self.assertTrue(
-            torch.isnan(
-                torch.special.modified_bessel_k(
-                    x_ok, torch.tensor([float("nan")], device=device, dtype=dtype)
-                )
-            ).all()
-        )
         x_neg = torch.tensor([-1.0], device=device, dtype=dtype)
-        self.assertTrue(torch.isnan(torch.special.modified_bessel_k(x_neg, nu)).all())
+        nan = torch.tensor([float("nan")], device=device, dtype=dtype)
+        self.assertTrue(torch.isnan(bessel_k(nan, nu)).all())
+        self.assertTrue(torch.isnan(bessel_k(x_ok, nan)).all())
+        self.assertTrue(torch.isnan(bessel_k(x_neg, nu)).all())
 
     @dtypes(torch.float32, torch.float64)
     def test_modified_bessel_k_symmetry(self, device, dtype):
