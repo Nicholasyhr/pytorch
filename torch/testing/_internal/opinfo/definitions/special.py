@@ -803,6 +803,15 @@ op_db: list[OpInfo] = [
         skips=(
             DecorateInfo(unittest.skip("Skipped!"), "TestCudaFuserOpInfo"),
             DecorateInfo(unittest.skip("Skipped!"), "TestNNCOpInfo"),
+            # SciPy's AMOS-backed kv gives up and returns NaN for the 1e20-scale
+            # orders probed here, while torch returns the correct limiting
+            # values (inf on overflow, 0 on underflow), so scipy is not a
+            # usable oracle at this scale.
+            DecorateInfo(
+                unittest.skip("Skipped!"),
+                "TestBinaryUfuncs",
+                "test_reference_numerics_large_values",
+            ),
             DecorateInfo(unittest.expectedFailure, "TestCommon", "test_compare_cpu"),
             DecorateInfo(unittest.expectedFailure, "TestCommon", device_type="mps"),
         ),

@@ -178,6 +178,24 @@ class TestModifiedBesselFunctions(TestCase):
             )
 
     @dtypes(torch.float32, torch.float64)
+    def test_modified_bessel_k_huge_nu_limits(self, device, dtype):
+        # At this order scale scipy's AMOS backend gives up and returns NaN,
+        # so the OpInfo large-values reference test is skipped; assert the
+        # limiting values directly instead: K_nu(x) overflows for nu >> x
+        # and underflows along nu == x as nu -> inf.
+        x = torch.tensor(
+            [501.0, 1001.2, 4988429.2, 1e20], device=device, dtype=dtype
+        )
+        nu = torch.full_like(x, 1e20)
+        expected = torch.tensor(
+            [float("inf"), float("inf"), float("inf"), 0.0],
+            device=device,
+            dtype=dtype,
+        )
+        self.assertEqual(torch.special.modified_bessel_k(x, nu), expected)
+        self.assertEqual(torch.special.modified_bessel_k(x, -nu), expected)
+
+    @dtypes(torch.float32, torch.float64)
     def test_modified_bessel_k_edge_cases(self, device, dtype):
         for nu_val in [0.0, 1.0, 2.5]:
             x = torch.tensor([0.0], device=device, dtype=dtype)
