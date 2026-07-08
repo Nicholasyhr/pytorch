@@ -301,7 +301,7 @@ class ManualOverlapPreservingBucketer(OverlapPreservingBucketer):
             if key is not None:
                 grouped_collectives[key].add(node)
 
-        for key, nodes in grouped_collectives.items():  # type: ignore[arg-type]
+        for nodes in grouped_collectives.values():  # type: ignore[arg-type]
             self._bucket_group(list(nodes))
 
 
@@ -491,7 +491,7 @@ class ManualOverlapScheduler(OverlapScheduler):
     def _manual_bucket_collectives(self) -> None:
         """Bucket nodes in each module_bucket from module_bucket_plans."""
         self._obtain_nodes_in_subgraph()
-        for i, nodes in enumerate(self.nodes_in_subgraph):
+        for _i, nodes in enumerate(self.nodes_in_subgraph):
             self.bucketer.manual_bucket_collectives(nodes=nodes)
 
         self.graph.lint()

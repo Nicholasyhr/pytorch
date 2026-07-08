@@ -11365,7 +11365,7 @@ class TestLinalgMPS(TestCaseMPS):
         self._test_addmm_addmv(torch.addmm, M, m1, m2, beta=0)
 
         # Test transpose
-        for t1, t2, t3, t4 in itertools.product([True, False], repeat=4):
+        for t1, t2, t3, t4 in itertools.product([True, False], repeat=4):  # noqa: B007
             def maybe_transpose(cond, m):
                 if not cond:
                     return m

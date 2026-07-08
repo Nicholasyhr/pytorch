@@ -1780,7 +1780,7 @@ class TestQuantizeFx(QuantizationTestCase):
                  None),
             ]
             for (ModuleClass, module_constructor_inputs,
-                 inputs, quantized_node, weight_prepack_node) in tests:
+                 inputs, _quantized_node, weight_prepack_node) in tests:
                 for is_reference in [True, False]:
                     node_occurrence = {}
                     if weight_prepack_node:
@@ -5587,7 +5587,7 @@ class TestQuantizeFx(QuantizationTestCase):
                 return x
 
         options = itertools.product([M1, M2], [True, False])
-        for M, is_qat in options:
+        for _M, _is_qat in options:
             m = M1().eval()
             example_inputs = (torch.randn(1, 3, 3, 3),)
             m = prepare_fx(m, get_default_qconfig_mapping(), example_inputs=example_inputs)
@@ -9710,7 +9710,7 @@ class TestQuantizeFxModels(QuantizationTestCase):
 
     @override_qengines
     def test_qat_embedding_linear(self):
-        for device in get_supported_device_types():
+        for _device in get_supported_device_types():
             class EmbeddingLinear(torch.nn.Module):
                 def __init__(self) -> None:
                     super().__init__()
