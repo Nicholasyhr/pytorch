@@ -26,8 +26,7 @@ class ConstTensorWrapper:
 
     def data_ptr(self) -> int:
         with torch._C.DisableTorchFunctionSubclass():
-            # const_data_ptr() exists at runtime but is absent from the stubs.
-            return self._tensor.const_data_ptr()  # type: ignore[attr-defined]
+            return self._tensor.const_data_ptr()
 
     @property
     def dtype(self) -> torch.dtype:

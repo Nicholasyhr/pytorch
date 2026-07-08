@@ -1616,6 +1616,7 @@ def gen_pyi(
                 defs("requires_grad_", ["self", "mode: _bool = True"], "Tensor")
             ],
             "element_size": [defs("element_size", ["self"], "_int")],
+            "const_data_ptr": [defs("const_data_ptr", ["self"], "_int")],
             "data_ptr": [defs("data_ptr", ["self"], "_int")],
             "dim": [defs("dim", ["self"], "_int")],
             "nonzero": [
