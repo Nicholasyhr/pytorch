@@ -255,7 +255,13 @@ class TestTorchDeviceType(TestCase):
         self.assertFalse(_throws_on_data_ptr_access(s2))
         self.assertFalse(raises_on_data_ptr(s2))
 
-    @xfailIfTorchDynamo
+    # This PR makes the Py3.14 CPU storage_type() path traceable; older Python
+    # versions and CUDA still exercise separate Dynamo gaps, so keep those xfailed.
+    @decorateIf(
+        unittest.expectedFailure,
+        lambda params: TEST_WITH_TORCHDYNAMO
+        and not (sys.version_info >= (3, 14) and params["device"] == "cpu"),
+    )
     @onlyNativeDeviceTypes
     @dtypes(*all_types_and_complex_and(torch.half, torch.bool, torch.bfloat16))
     @slowTestIf(IS_WINDOWS)
