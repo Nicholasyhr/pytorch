@@ -14,6 +14,7 @@ CPython behavioral gaps.
 import collections
 import operator
 import types
+import typing
 import unittest
 
 import torch
@@ -22,7 +23,11 @@ import torch._dynamo.testing
 from torch._dynamo.variables.base import VariableTracker
 from torch._dynamo.variables.constant import ConstantVariable
 from torch._dynamo.variables.lists import BaseListVariable, DequeVariable, RangeVariable
-from torch._library.opaque_object import MemberType, OpaqueBase, register_opaque_type
+from torch._library.opaque_object import (
+    CustomClassBase,
+    MemberType,
+    register_custom_class,
+)
 from torch.testing._internal.inductor_utils import HAS_CUDA_AND_TRITON, HAS_GPU
 
 
@@ -381,6 +386,27 @@ class GetItemTests(torch._dynamo.test_case.TestCase):
         compiled = torch.compile(fn, backend="eager")(x)
         self.assertEqual(expected, compiled)
 
+    def test_tensor_negative_index(self):
+        def fn(x):
+            return operator.getitem(x, -1)
+
+        x = torch.randn(4, 4)
+        self.assertEqual(fn(x), self._compile(fn, x))
+
+    def test_tensor_bool_index(self):
+        def fn(x):
+            return operator.getitem(x, True)
+
+        x = torch.randn(4, 4)
+        self.assertEqual(fn(x), self._compile(fn, x))
+
+    def test_tensor_ellipsis_index(self):
+        def fn(x):
+            return operator.getitem(x, ...)
+
+        x = torch.randn(4, 4)
+        self.assertEqual(fn(x), self._compile(fn, x))
+
     # --- NamedTupleVariable (via UserDefinedTupleVariable) ---
 
     def test_namedtuple_int_index(self):
@@ -408,6 +434,24 @@ class GetItemTests(torch._dynamo.test_case.TestCase):
 
         x = torch.randn(4)
         self.assertEqual(fn(x), self._compile(fn, x))
+
+    def test_typing_subscript_dict(self):
+        def fn(x):
+            operator.getitem(typing.Dict, (str, int))  # noqa: UP006
+            return x + 1
+
+        x = torch.randn(4)
+        self.assertEqual(fn(x), self._compile(fn, x))
+
+    def test_typing_subscript_non_constant(self):
+        """Subscripting a typing construct with a traced (non-constant) value should graph break."""
+
+        def fn(x):
+            return operator.getitem(list, x)
+
+        x = torch.randn(4)
+        with self.assertRaises(torch._dynamo.exc.Unsupported):
+            self._compile(fn, x)
 
     # --- MappingProxyVariable ---
 
@@ -472,6 +516,61 @@ class GetItemTests(torch._dynamo.test_case.TestCase):
         x = torch.randn(4)
         compiled = torch.compile(model, backend="eager", fullgraph=True)
         self.assertEqual(model(x), compiled(x))
+
+    def test_nn_module_list_negative_index(self):
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleList(
+                    [torch.nn.Linear(4, 4) for _ in range(3)]
+                )
+
+            def forward(self, x):
+                return operator.getitem(self.layers, -1)(x)
+
+        model = Model()
+        x = torch.randn(4)
+        compiled = torch.compile(model, backend="eager", fullgraph=True)
+        self.assertEqual(model(x), compiled(x))
+
+    def test_nn_sequential_slice(self):
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.seq = torch.nn.Sequential(
+                    torch.nn.Linear(4, 4),
+                    torch.nn.ReLU(),
+                    torch.nn.Linear(4, 4),
+                )
+
+            def forward(self, x):
+                sub = operator.getitem(self.seq, slice(0, 2))
+                return sub(x)
+
+        model = Model()
+        x = torch.randn(4)
+        # Slice on nn.Module triggers convert_to_unspecialized → RestartAnalysis,
+        # so don't use fullgraph=True.
+        cnt = torch._dynamo.testing.CompileCounter()
+        compiled = torch.compile(model, backend=cnt)
+        self.assertEqual(model(x), compiled(x))
+        self.assertGreaterEqual(cnt.frame_count, 1)
+
+    def test_nn_module_dict_missing_key(self):
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.layers = torch.nn.ModuleDict({"fc": torch.nn.Linear(4, 4)})
+
+            def forward(self, x):
+                return operator.getitem(self.layers, "nonexistent")(x)
+
+        model = Model()
+        x = torch.randn(4)
+        # ModuleDict["nonexistent"] raises KeyError at trace time, which
+        # surfaces as Unsupported (observed exception, no handler in compiled fn).
+        with self.assertRaises(torch._dynamo.exc.Unsupported):
+            torch.compile(model, backend="eager", fullgraph=True)(x)
 
     # --- UserDefinedObjectVariable ---
 
@@ -616,34 +715,50 @@ class GetItemTests(torch._dynamo.test_case.TestCase):
         x = torch.randn(4)
         self.assertEqual(fn(x), self._compile(fn, x))
 
-    # --- TorchScriptObjectVariable ---
+    def test_getattr_dict_subscript(self):
+        """obj.__dict__["key"] → GetAttrVariable → DunderDictVariable."""
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.linear = torch.nn.Linear(4, 4)
+
+            def forward(self, x):
+                return self.__dict__["_modules"]["linear"](x)
+
+        model = Model()
+        x = torch.randn(4)
+        compiled = torch.compile(model, backend="eager")
+        self.assertEqual(model(x), compiled(x))
+
+    # --- CustomClassObjectVariable ---
 
     def test_opaque_object_getitem(self):
-        class OpaqueScaler(OpaqueBase):
+        class OpaqueScaler(CustomClassBase):
             def __init__(self, scale):
                 self.scale = scale
 
             def apply(self, x):
                 return x * self.scale
 
-        class OpaqueContainer(OpaqueBase):
+        class OpaqueContainer(CustomClassBase):
             def __init__(self, items):
                 self.items = items
 
             def __getitem__(self, idx):
                 return self.items[idx]
 
-        register_opaque_type(
+        register_custom_class(
             OpaqueScaler,
-            typ="reference",
+            typ="symbolic",
             members={
                 "scale": MemberType.USE_REAL,
                 "apply": MemberType.INLINED,
             },
         )
-        register_opaque_type(
+        register_custom_class(
             OpaqueContainer,
-            typ="reference",
+            typ="symbolic",
             members={
                 "items": MemberType.USE_REAL,
                 "__getitem__": MemberType.INLINED,
@@ -974,6 +1089,134 @@ class GetItemTests(torch._dynamo.test_case.TestCase):
 
         x = torch.randn(4)
         self.assertEqual(fn(x), self._compile(fn, x))
+
+    def test_list_constructor_rejects_next_only(self):
+        class IterNextOnly:
+            def __init__(self, items):
+                self.items = items
+                self.index = 0
+
+            def __next__(self):
+                if self.index >= len(self.items):
+                    raise StopIteration
+                item = self.items[self.index]
+                self.index += 1
+                return item
+
+        def fn():
+            try:
+                list(IterNextOnly([1, 2, 3]))
+            except TypeError as exc:
+                return "object is not iterable" in str(exc)
+            return False
+
+        self.assertEqual(fn(), self._compile(fn))
+
+    def test_list_constructor_rejects_iter_without_next(self):
+        class IterNoNext:
+            def __iter__(self):
+                return self
+
+        def fn():
+            try:
+                list(IterNoNext())
+            except TypeError as exc:
+                return str(exc) == "iter() returned non-iterator of type 'IterNoNext'"
+            return False
+
+        self.assertEqual(fn(), self._compile(fn))
+
+    def test_list_constructor_rejects_keywords(self):
+        def fn():
+            try:
+                list(unsupported_arg=[])
+            except TypeError as exc:
+                return "list() takes no keyword" in str(exc)
+            return False
+
+        self.assertEqual(fn(), self._compile(fn))
+
+    def test_list_constructor_rejects_too_many_args(self):
+        def fn():
+            try:
+                list([], [])
+            except TypeError as exc:
+                return "expected at most 1 argument" in str(exc)
+            return False
+
+        self.assertEqual(fn(), self._compile(fn))
+
+    def test_tuple_constructor_preserves_exact_tuple_identity(self):
+        def fn(x):
+            items = (x, x + 1)
+            return tuple(items) is items
+
+        x = torch.randn(4)
+        self.assertEqual(fn(x), self._compile(fn, x))
+
+    def test_tuple_constructor_converts_torch_size_to_tuple(self):
+        def fn():
+            size = torch.Size([2, 3])
+            result = tuple(size)
+            return type(result) is tuple and result == (2, 3) and result is not size
+
+        self.assertEqual(fn(), self._compile(fn))
+
+    def test_tuple_constructor_rejects_next_only(self):
+        class IterNextOnly:
+            def __init__(self, items):
+                self.items = items
+                self.index = 0
+
+            def __next__(self):
+                if self.index >= len(self.items):
+                    raise StopIteration
+                item = self.items[self.index]
+                self.index += 1
+                return item
+
+        def fn():
+            try:
+                tuple(IterNextOnly([1, 2, 3]))
+            except TypeError as exc:
+                return "object is not iterable" in str(exc)
+            return False
+
+        self.assertEqual(fn(), self._compile(fn))
+
+    def test_tuple_constructor_rejects_iter_without_next(self):
+        class IterNoNext:
+            def __iter__(self):
+                return self
+
+        def fn():
+            try:
+                tuple(IterNoNext())
+            except TypeError as exc:
+                return str(exc) == "iter() returned non-iterator of type 'IterNoNext'"
+            return False
+
+        self.assertEqual(fn(), self._compile(fn))
+
+    def test_tuple_constructor_rejects_keywords(self):
+        def fn():
+            try:
+                tuple(unsupported_arg=[])
+            except TypeError as exc:
+                return "tuple() takes no keyword" in str(exc)
+            return False
+
+        self.assertEqual(fn(), self._compile(fn))
+
+    def test_tuple_constructor_rejects_too_many_args(self):
+        def fn():
+            try:
+                tuple([], [])
+            except TypeError as exc:
+                return "expected at most 1 argument" in str(exc)
+            return False
+
+        self.assertEqual(fn(), self._compile(fn))
 
     def test_tuple_seqonly(self):
         """tuple(SeqOnly) → generic_getiter → sequence_iterator → __getitem__."""
