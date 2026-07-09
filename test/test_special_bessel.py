@@ -373,6 +373,9 @@ class TestModifiedBesselFunctions(TestCase):
             ref = float(scipy_special.iv(nu_val, x_val))
             if abs(ref) < 1e-300:
                 self.assertLess(abs(result), 1e-250)
+            elif abs(ref) < torch.finfo(dtype).tiny:
+                # the reference underflows this dtype, so the result must too
+                self.assertLess(abs(result), float(torch.finfo(dtype).tiny))
             else:
                 self.assertLess(abs(result - ref) / abs(ref), self._tol(dtype)["rtol"])
 
