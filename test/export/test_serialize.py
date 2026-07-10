@@ -38,7 +38,7 @@ import torch.export._trace
 import torch.utils._pytree as pytree
 from torch._export.db.case import ExportCase, SupportLevel
 from torch._export.db.examples import all_examples
-from torch._export.serde.schema import ArgumentKind
+from torch._export.serde.schema import Argument, ArgumentKind
 from torch._export.serde.serialize import (
     _dict_to_dataclass,
     _to_json_bytes,
@@ -505,6 +505,45 @@ def forward(self, x):
         )
         self.assertEqual(len(res), 1)
         self.assertEqual(res[0].arg._type, "as_sym_ints")
+
+    def test_serialize_list_of_int_and_float_lists(self):
+        # serialize_input must handle List[List[int]] / List[List[float]]
+        # arguments, both empty (kind is inferred from the declared arg type)
+        # and non-empty passed as actual Python lists, not just tuples.
+        serializer = GraphModuleSerializer(None, None)  # type: ignore[arg-type]
+
+        # Empty nested lists infer their kind from the declared element type.
+        int_list_type = torch.ListType(torch.ListType(torch.IntType.get()))
+        float_list_type = torch.ListType(torch.ListType(torch.FloatType.get()))
+        self.assertEqual(
+            serializer.serialize_input([], int_list_type),
+            Argument.create(as_int_lists=[]),
+        )
+        self.assertEqual(
+            serializer.serialize_input([], float_list_type),
+            Argument.create(as_float_lists=[]),
+        )
+
+        # An empty nested list with an unsupported inner type is rejected.
+        str_list_type = torch.ListType(torch.ListType(torch.StringType.get()))
+        with self.assertRaisesRegex(SerializeError, "Empty list with nested type"):
+            serializer.serialize_input([], str_list_type)
+
+        # Non-empty List[List[int]] passed as actual lists (not tuples).
+        self.assertEqual(
+            serializer.serialize_input([[1, 2], [3, 4, 5]]),
+            Argument.create(as_int_lists=[[1, 2], [3, 4, 5]]),
+        )
+        # Tuples remain supported for backward compatibility.
+        self.assertEqual(
+            serializer.serialize_input([(1, 2), (3, 4, 5)]),
+            Argument.create(as_int_lists=[[1, 2], [3, 4, 5]]),
+        )
+        # Non-empty List[List[float]] passed as actual lists.
+        self.assertEqual(
+            serializer.serialize_input([[1.0, 2.0], [3.0]]),
+            Argument.create(as_float_lists=[[1.0, 2.0], [3.0]]),
+        )
 
     def test_serialize_list_returns(self) -> None:
         class MyModule(torch.nn.Module):
